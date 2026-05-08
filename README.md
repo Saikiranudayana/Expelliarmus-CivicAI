@@ -1,6 +1,6 @@
-# Expelliarmus: AI-Powered Local Governance Explainer
+# CivicAI: AI-Powered Local Governance Explainer
 
-Expelliarmus is an AI-powered civic intelligence platform that transforms complex public governance documents into simple, understandable insights for everyday citizens.
+CivicAI is an AI-powered civic intelligence platform that transforms complex public governance documents into simple, understandable insights for everyday citizens.
 
 ## Problem Statement
 
