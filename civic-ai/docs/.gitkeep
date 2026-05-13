@@ -1,0 +1,3 @@
+# Place community PDF documents here.
+# The ingestion pipeline scans this folder for all *.pdf files.
+# Example files: council_minutes.pdf, zoning_bylaws.pdf, budget_2025.pdf

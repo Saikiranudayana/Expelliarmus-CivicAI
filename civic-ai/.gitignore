@@ -1,0 +1,8 @@
+.env
+chroma_db/
+data/scrape_state.json
+data/subscribers.json
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/

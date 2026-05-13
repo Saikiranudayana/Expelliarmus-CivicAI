@@ -1,0 +1,35 @@
+# ─── Web Framework ───────────────────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9
+
+# ─── Config & Validation ─────────────────────────────────────────────────────
+pydantic>=2.7.0
+pydantic-settings>=2.2.1
+python-dotenv>=1.0.1
+
+# ─── PDF Processing ───────────────────────────────────────────────────────────
+pdfplumber>=0.11.0
+
+# ─── Tokenization ─────────────────────────────────────────────────────────────
+tiktoken>=0.7.0
+
+# ─── NVIDIA NIM API (OpenAI-compatible SDK) ──────────────────────────────────
+openai>=1.30.0
+
+# ─── Vector DB (ChromaDB — pure Python, file-based, no Docker) ────────────────
+chromadb>=0.5.0
+
+# ─── Auth ─────────────────────────────────────────────────────────────────────
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+
+# ─── Web Scraping ───────────────────────────────────────────────────────────────
+beautifulsoup4>=4.12.0
+lxml>=5.2.0              # fast HTML parser for BeautifulSoup
+
+# ─── Background Scheduler ───────────────────────────────────────────────
+apscheduler>=3.10.0
+
+# ─── HTTP client (WhatsApp Cloud API + web scraping) ─────────────────────────
+httpx>=0.27.0
