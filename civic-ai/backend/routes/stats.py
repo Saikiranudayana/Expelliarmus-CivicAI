@@ -37,7 +37,7 @@ _RSS_TTL_SECONDS = 600  # 10 minutes
 _rss_cached_headline: Optional[str] = None
 _rss_cache_fetched_at: float = 0.0
 
-_RSS_URL = "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3"
+_RSS_URL = "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=3&Regid=3"
 
 _QUESTIONS_FILE = (
     Path(__file__).resolve().parent.parent.parent / "data" / "recent_questions.json"
