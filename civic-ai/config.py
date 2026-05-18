@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     # JWT Auth
     JWT_SECRET_KEY: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
-    JWT_EXPIRE_MINUTES: int = 60
+    JWT_EXPIRE_MINUTES: int = 480  # 8 hours
 
     # WhatsApp / Meta
     WHATSAPP_VERIFY_TOKEN: str = ""

@@ -5,14 +5,29 @@ const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 const api = axios.create({ baseURL: BASE, timeout: 120_000 });
 
-// Attach JWT from localStorage on every request
+// Attach JWT + localtunnel bypass header on every request
 api.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
     const token = localStorage.getItem("civic_ai_token");
     if (token) config.headers["Authorization"] = `Bearer ${token}`;
   }
+  // Required when backend is exposed via localtunnel (skips the password page)
+  config.headers["bypass-tunnel-reminder"] = "true";
   return config;
 });
+
+// Clear expired token and reload to login screen on 401
+api.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    if (err?.response?.status === 401 && typeof window !== "undefined") {
+      localStorage.removeItem("civic_ai_token");
+      localStorage.removeItem("civic_ai_role");
+      window.location.reload();
+    }
+    return Promise.reject(err);
+  }
+);
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -74,14 +89,19 @@ export interface MeetingCreate {
 
 // ── Endpoints ────────────────────────────────────────────────────────────────
 
-export async function login(username: string, password: string): Promise<string> {
+export interface LoginResponse {
+  access_token: string;
+  role: string;
+}
+
+export async function login(username: string, password: string): Promise<LoginResponse> {
   const form = new URLSearchParams();
   form.append("username", username);
   form.append("password", password);
   const { data } = await api.post("/auth/token", form, {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
   });
-  return data.access_token as string;
+  return { access_token: data.access_token as string, role: data.role as string };
 }
 
 export async function ask(question: string, top_k = 5): Promise<AskResponse> {

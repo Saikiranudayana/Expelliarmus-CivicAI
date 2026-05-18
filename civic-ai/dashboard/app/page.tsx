@@ -15,12 +15,12 @@ import { getStats, login, type StatsResponse } from "@/lib/api";
 
 type Tab = "upload" | "query" | "analytics" | "broadcast" | "meetings";
 
-const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
-  { id: "upload",    label: "Ingest Docs",  icon: <UploadCloud className="h-3.5 w-3.5" /> },
+const TABS: { id: Tab; label: string; icon: React.ReactNode; organizerOnly?: boolean }[] = [
+  { id: "upload",    label: "Ingest Docs",  icon: <UploadCloud className="h-3.5 w-3.5" />, organizerOnly: true },
   { id: "query",     label: "Ask CIVIC AI", icon: <Search className="h-3.5 w-3.5" /> },
   { id: "analytics", label: "Analytics",    icon: <BarChart2 className="h-3.5 w-3.5" /> },
-  { id: "broadcast", label: "Broadcast",    icon: <Send className="h-3.5 w-3.5" /> },
-  { id: "meetings",  label: "Meetings",     icon: <CalendarDays className="h-3.5 w-3.5" /> },
+  { id: "broadcast", label: "Broadcast",    icon: <Send className="h-3.5 w-3.5" />, organizerOnly: true },
+  { id: "meetings",  label: "Meetings",     icon: <CalendarDays className="h-3.5 w-3.5" />, organizerOnly: true },
 ];
 
 const TAB_DESCRIPTIONS: Record<Tab, { title: string; sub: string }> = {
@@ -41,7 +41,7 @@ const tabVariants = {
 /* ══════════════════════════════════════════════════════════════════════════════
    Login Screen
 ══════════════════════════════════════════════════════════════════════════════ */
-function LoginScreen({ onLogin }: { onLogin: () => void }) {
+function LoginScreen({ onLogin }: { onLogin: (role: string) => void }) {
   const [user, setUser] = useState("");
   const [pass, setPass] = useState("");
   const [err, setErr]   = useState("");
@@ -52,9 +52,10 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
     setErr("");
     setLoading(true);
     try {
-      const token = await login(user, pass);
-      localStorage.setItem("civic_ai_token", token);
-      onLogin();
+      const { access_token, role } = await login(user, pass);
+      localStorage.setItem("civic_ai_token", access_token);
+      localStorage.setItem("civic_ai_role", role);
+      onLogin(role);
     } catch {
       setErr("Invalid username or password.");
     } finally {
@@ -150,7 +151,8 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
    Main Dashboard
 ══════════════════════════════════════════════════════════════════════════════ */
 export default function DashboardPage() {
-  const [tab, setTab]         = useState<Tab>("upload");
+  const [role, setRole]       = useState<string>("resident");
+  const [tab, setTab]         = useState<Tab>("query");
   const [stats, setStats]     = useState<StatsResponse | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [authed, setAuthed]   = useState(false);
@@ -158,6 +160,9 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (typeof window !== "undefined" && localStorage.getItem("civic_ai_token")) {
+      const savedRole = localStorage.getItem("civic_ai_role") ?? "resident";
+      setRole(savedRole);
+      setTab(savedRole === "organizer" ? "upload" : "query");
       setAuthed(true);
     }
   }, []);
@@ -175,11 +180,16 @@ export default function DashboardPage() {
 
   function handleLogout() {
     localStorage.removeItem("civic_ai_token");
+    localStorage.removeItem("civic_ai_role");
     setAuthed(false);
+    setRole("resident");
+    setTab("query");
   }
 
+  const visibleTabs = TABS.filter((t) => role === "organizer" || !t.organizerOnly);
+
   if (!authed) {
-    return <LoginScreen onLogin={() => setAuthed(true)} />;
+    return <LoginScreen onLogin={(r) => { setRole(r); setTab(r === "organizer" ? "upload" : "query"); setAuthed(true); }} />;
   }
 
   const currentMeta = TAB_DESCRIPTIONS[tab];
@@ -203,7 +213,7 @@ export default function DashboardPage() {
             <div>
               <h1 className="font-bold text-sm leading-none" style={{ color: "#E1E0CC" }}>CIVIC AI</h1>
               <p className="text-[10px] mt-0.5" style={{ color: "rgba(225,224,204,0.4)" }}>
-                Organizer Dashboard · NVIDIA NIM
+                {role === "organizer" ? "Organizer Dashboard" : "Resident Dashboard"} · NVIDIA NIM
               </p>
             </div>
           </div>
@@ -233,7 +243,7 @@ export default function DashboardPage() {
       {/* ── Tab navigation ───────────────────────────────────────────────── */}
       <nav className="relative z-10 border-b border-[rgba(222,219,200,0.06)] bg-black/60 backdrop-blur-xl px-6">
         <div className="max-w-7xl mx-auto flex gap-1 overflow-x-auto">
-          {TABS.map(({ id, label, icon }) => (
+          {visibleTabs.map(({ id, label, icon }) => (
             <button
               key={id}
               onClick={() => setTab(id)}

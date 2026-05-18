@@ -4,11 +4,15 @@ backend/routes/query.py
 POST /ask  — RAG-powered Q&A endpoint with optional Tavily web-search augmentation
 
 Flow:
-  1. Embed the user question via NVIDIA NeMo Retriever (input_type="query")
-  2. Retrieve top-5 chunks from ChromaDB
-  3. (Optional) Augment with Tavily web-search results
-  4. Build a grounded prompt and call LLM via NVIDIA NIM
-  5. Return { answer, citations, web_sources } — answer is structured Markdown
+  1. DataFetchService embeds the query and retrieves top-k chunks from ChromaDB
+  2. (Optional) Augment with Tavily web-search results
+  3. summarizer.generate() builds the prompt and calls the NVIDIA NIM LLM
+  4. Return { answer, citations, web_sources, sources_used }
+
+Retrieval and LLM generation are fully decoupled:
+  - DataFetchService handles all vector-store interaction
+  - summarizer.py handles all LLM interaction
+  This module orchestrates the two but owns neither.
 """
 
 import json
@@ -18,19 +22,20 @@ from pathlib import Path
 from typing import List
 
 import httpx
-from fastapi import APIRouter, Depends, Request, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from openai import OpenAI
 
 from config import settings
-from rag_pipeline.embeddings import generate_query_embedding
-from rag_pipeline.vector_store import search_chunks
+from rag_pipeline.data_fetch_service import DataFetchError, DataFetchService
+from rag_pipeline import summarizer
 from backend.auth import require_resident, TokenData
+from backend.dependencies import get_data_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["query"])
 
 _QUESTIONS_FILE = Path(__file__).resolve().parent.parent.parent / "data" / "recent_questions.json"
+
 
 def _log_question(question: str, username: str) -> None:
     """Append question to recent_questions.json, keeping last 50."""
@@ -46,7 +51,9 @@ def _log_question(question: str, username: str) -> None:
     except Exception as exc:
         logger.warning("Could not log question: %s", exc)
 
+
 # ── Request / Response schemas ────────────────────────────────────────────────
+
 
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=3, max_length=2000,
@@ -63,23 +70,16 @@ class Citation(BaseModel):
 
 
 class AskResponse(BaseModel):
-    answer: str          # Structured Markdown
+    answer: str               # Structured Markdown
     citations: List[Citation]
     web_sources: List[str] = []
-
-
-# ── LLM client (NVIDIA NIM — OpenAI-compatible) ───────────────────────────────
-
-def _llm_client() -> OpenAI:
-    return OpenAI(
-        base_url=settings.NVIDIA_NIM_BASE_URL,
-        api_key=settings.NVIDIA_API_KEY,
-    )
+    sources_used: int = 0     # number of RAG chunks that contributed to the answer
 
 
 # ── Tavily web search ─────────────────────────────────────────────────────────
 
-def _tavily_search(query: str, max_results: int = 3) -> list:
+
+def _tavily_search(query: str, max_results: int = 3) -> list[dict]:
     """Call Tavily Search API and return top result objects."""
     if not settings.TAVILY_API_KEY or settings.TAVILY_API_KEY.startswith("tvly-your"):
         return []
@@ -102,105 +102,37 @@ def _tavily_search(query: str, max_results: int = 3) -> list:
         return []
 
 
-# ── System prompt ─────────────────────────────────────────────────────────────
-
-_SYSTEM_PROMPT = """You are CIVIC AI, an expert assistant for the city of Bengaluru.
-You help residents and community organisers understand civic data, BBMP budgets,
-ward committee decisions, and local government policies.
-
-CRITICAL FORMATTING RULES — always respond in this exact Markdown structure:
-
-## Summary
-2-3 sentence plain-language overview of the answer.
-
-## Key Details
-- Use bullet points for each key fact
-- **Bold** important numbers, names, and amounts
-- Reference source documents inline
-
-## What This Means for Residents
-1-2 sentences explaining the practical impact.
-
-## Sources
-- List document names / URLs used
-
-Additional rules:
-- Answer ONLY from the provided context and web results.
-- If insufficient data exists, state: "I don't have enough information in my knowledge base. Please contact BBMP directly."
-- Be concise, factual, and use plain language.
-- Never fabricate data or numbers.
-"""
-
-
-# ── Prompt builder ────────────────────────────────────────────────────────────
-
-def _build_prompt(question: str, chunks: list, web_results: list) -> str:
-    context_parts = []
-    for i, chunk in enumerate(chunks, start=1):
-        context_parts.append(
-            f"[{i}] Source: {chunk['source']} (chunk {chunk['chunk_index']})\n"
-            f"{chunk['text']}"
-        )
-    context = "\n\n---\n\n".join(context_parts)
-
-    web_context = ""
-    if web_results:
-        web_parts = []
-        for r in web_results:
-            title = r.get("title", "Web Result")
-            url = r.get("url", "")
-            content = r.get("content", "")[:500]
-            web_parts.append(f"[Web] {title}\nURL: {url}\n{content}")
-        web_context = (
-            "\n\nAdditional live web search results:\n\n"
-            + "\n\n---\n\n".join(web_parts)
-        )
-
-    return (
-        f"Context from BBMP / Karnataka civic documents:\n\n"
-        f"{context}"
-        f"{web_context}\n\n"
-        f"---\n\n"
-        f"Question: {question}\n\n"
-        f"Respond in the structured Markdown format described in the system prompt:"
-    )
-
-
 # ── Endpoint ──────────────────────────────────────────────────────────────────
+
 
 @router.post("/ask", response_model=AskResponse)
 async def ask(
     body: AskRequest,
-    request: Request,
     current_user: TokenData = Depends(require_resident),
+    data_service: DataFetchService = Depends(get_data_service),
 ):
     """
     Ask a civic question. Returns structured Markdown answer + citations.
+
+    Retrieval is handled by DataFetchService; LLM generation by summarizer.py.
     """
-    collection = request.app.state.collection
-
-    # 1. Embed the question
+    # 1. Retrieve top-k chunks via DataFetchService (embedding + ChromaDB search)
     try:
-        query_vector = generate_query_embedding(body.question)
-    except Exception as exc:
-        logger.error("Embedding failed: %s", exc)
-        raise HTTPException(status_code=502, detail=f"Embedding service error: {exc}")
+        context = data_service.retrieve(body.question, top_k=body.top_k)
+    except DataFetchError as exc:
+        logger.error("Retrieval failed: %s", exc)
+        raise HTTPException(status_code=503, detail=f"Retrieval failed: {exc}")
 
-    # 2. Retrieve top-k chunks
-    try:
-        chunks = search_chunks(collection, query_vector, top_k=body.top_k)
-    except Exception as exc:
-        logger.error("Vector search failed: %s", exc)
-        raise HTTPException(status_code=500, detail=f"Vector store error: {exc}")
-
-    # 3. Optional Tavily web augmentation
-    web_results: list = []
+    # 2. Optional Tavily web augmentation
+    web_results: list[dict] = []
     web_urls: list[str] = []
     if body.use_web_search:
         web_results = _tavily_search(body.question)
         web_urls = [r.get("url", "") for r in web_results if r.get("url")]
 
-    if not chunks:
+    # 3. Handle empty retrieval
+    if not context.chunks:
+        _log_question(body.question, current_user.username)
         return AskResponse(
             answer=(
                 "## No Information Found\n\n"
@@ -209,27 +141,21 @@ async def ask(
             ),
             citations=[],
             web_sources=web_urls,
+            sources_used=0,
         )
 
-    # 4. Build prompt and call LLM
-    prompt = _build_prompt(body.question, chunks, web_results)
-    client = _llm_client()
+    # 4. Generate answer via summarizer (LLM call — no FAISS/ChromaDB here)
     try:
-        response = client.chat.completions.create(
-            model=settings.NVIDIA_LLM_MODEL,
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=1024,
-            temperature=0.2,
+        answer, raw_citations = await summarizer.generate(
+            query=body.question,
+            context=context,
+            web_results=web_results,
         )
-        answer = response.choices[0].message.content.strip()
-    except Exception as exc:
-        logger.error("LLM call failed: %s", exc)
-        raise HTTPException(status_code=502, detail=f"LLM service error: {exc}")
+    except RuntimeError as exc:
+        logger.error("LLM generation failed: %s", exc)
+        raise HTTPException(status_code=502, detail=str(exc))
 
-    # 5. Build citations
+    # 5. Build typed Citation objects for the response
     citations = [
         Citation(
             source=c["source"],
@@ -237,11 +163,16 @@ async def ask(
             text=c["text"],
             score=c["score"],
         )
-        for c in chunks
+        for c in raw_citations
     ]
 
     _log_question(body.question, current_user.username)
-    return AskResponse(answer=answer, citations=citations, web_sources=web_urls)
+    return AskResponse(
+        answer=answer,
+        citations=citations,
+        web_sources=web_urls,
+        sources_used=len(context.chunks),
+    )
 
 
 @router.get("/ask/recent", tags=["query"])

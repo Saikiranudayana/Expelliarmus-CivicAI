@@ -29,6 +29,9 @@ from backend.routes.query import router as query_router
 from backend.routes.ingest import router as ingest_router
 from backend.routes.meetings import router as meetings_router
 from backend.routes.subscribers import router as subscribers_router
+from backend.routes.stats import router as stats_router
+from backend.routes.market import router as market_router
+from backend.routes.feedback import router as feedback_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -64,7 +67,11 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],       # tighten in production
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -75,6 +82,9 @@ app.include_router(query_router)
 app.include_router(ingest_router)
 app.include_router(meetings_router)
 app.include_router(subscribers_router)
+app.include_router(stats_router)
+app.include_router(market_router)
+app.include_router(feedback_router)
 
 
 @app.get("/health", tags=["system"])

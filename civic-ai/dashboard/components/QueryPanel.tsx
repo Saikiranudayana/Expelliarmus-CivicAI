@@ -6,6 +6,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Search, Loader2, AlertCircle, ExternalLink, FileText, Globe } from "lucide-react";
 import { ask, type AskResponse } from "@/lib/api";
+import CityStatsBanner from "@/components/ticker/CityStatsBanner";
 
 export default function QueryPanel() {
   const [question, setQuestion] = useState("");
@@ -31,6 +32,9 @@ export default function QueryPanel() {
 
   return (
     <div className="space-y-5">
+      {/* ── City Stats Banner ───────────────────────────────────────────── */}
+      <CityStatsBanner />
+
       {/* ── Search form ────────────────────────────────────────────────── */}
       <form onSubmit={handleSubmit} className="flex gap-2">
         <div className="flex-1 relative">
